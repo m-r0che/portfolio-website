@@ -1,0 +1,132 @@
+:root {
+  color-scheme: light;
+  /* Warm paper — workshop daylight, not SaaS white. */
+  --paper: #f4eee1;
+  --paper-2: #efe7d6;
+  --ink: #221d15;
+  --ink-dim: #6c6253;
+  --rule: rgba(34, 29, 21, 0.14);
+  --accent: #3f5b6c; /* muted slate-blue, used sparingly for links */
+  --accent-deep: #2c4351;
+  --glow: rgba(255, 196, 120, 0.55);
+
+  --serif: 'EB Garamond', Georgia, 'Times New Roman', serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Back-compat aliases for the dark /workshop route. */
+  --bg: var(--paper);
+  --panel: rgba(244, 238, 225, 0.85);
+
+  font-family: var(--serif);
+}
+
+/* Dark scope for the experimental 3D route (opt-in via class). */
+.theme-dark {
+  color-scheme: dark;
+  --paper: #1a1410;
+  --ink: #f4ead7;
+  --ink-dim: #c8b896;
+  --rule: rgba(244, 234, 215, 0.12);
+  --bg: #1a1410;
+  --panel: rgba(26, 20, 16, 0.85);
+}
+
+/* The landing page is a dark, warm workshop interior — lit by the lamp, with
+   the edges falling into shadow. Toggled on the <body> from the page on mount
+   (the reveal veil hides the pre-JS moment, so there's no flash). */
+body.room {
+  color-scheme: dark;
+  --paper: #241a11;
+  --ink: #f3ead8;
+  --ink-dim: #bcab89;
+  --rule: rgba(241, 230, 210, 0.15);
+  --accent: #d8b277; /* warm brass — links read warm in the lamplight */
+  --accent-deep: #f3d199;
+  --glow: rgba(255, 196, 120, 0.6);
+  color: var(--ink);
+  /* Traces and props run out into the margins; keep that from adding a
+     horizontal scrollbar. */
+  overflow-x: hidden;
+  /* A warm-lit bench down the middle, falling into cool shadow at the edges —
+     fixed, so the reading column stays lit at every scroll position rather
+     than dropping into a black void below the hero. */
+  background-color: #1d150d;
+  background-image: linear-gradient(
+    90deg,
+    #160f09 0%,
+    #241a11 22%,
+    #38291a 50%,
+    #241a11 78%,
+    #160f09 100%
+  );
+  background-attachment: fixed;
+}
+
+/* On the dark room the multiply grain vanishes; switch it to a faint lighter
+   speckle so the wood has patina instead of reading as flat black. */
+body.room::after {
+  mix-blend-mode: soft-light;
+  opacity: 0.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-size: 1.18rem;
+  line-height: 1.62;
+}
+
+/* Hand-made paper: a fixed fibre texture over everything, so surfaces read as
+   pressed pulp rather than flat screen white. Sits above content but ignores
+   the pointer, and stays faint enough not to touch legibility. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  opacity: 0.07;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+::selection {
+  background: rgba(255, 196, 120, 0.4);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
