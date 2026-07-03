@@ -83,6 +83,172 @@
     surgeTimer = setTimeout(() => (surging = false), 1100);
   }
 
+  // ── The bench wire: one continuous cable from the terminal down the page. ──
+  // The wire is plugged into the CRT in the top-left margin, snakes down the
+  // column edges, and crosses the reading column at each section boundary — so
+  // the horizontal runs *are* the dividers. Scrolling charges it from the top
+  // down (a draw-on via stroke-dashoffset), and a white-hot bead rides the
+  // leading edge like live current. Geometry is measured from the real layout,
+  // so it stays glued to the dividers as content/heights change.
+  let pageEl = $state<HTMLElement | undefined>(undefined);
+  let wireW = $state(0);
+  let wireH = $state(0);
+  let charge = $state(0); // 0..1 scroll progress = how far the current has run
+  let reduceMotion = $state(false);
+  let scrollRaf = 0;
+  let wireRO: ResizeObserver | undefined;
+
+  // The wire is built from brass-pipe sprites: straight runs (a seamless shaft
+  // tiled to length), a ball joint at each corner, and a frayed sparking end at
+  // the terminus — each with an "off" and "on" art layer. The scroll-charge
+  // lights them in sequence, so current visibly flows down the pipe.
+  type WireSeg = { dir: 'h' | 'v'; x: number; y: number; len: number; s: number };
+  type WireNode = { kind: 'joint' | 'end'; x: number; y: number; at: number; rot: number };
+  let segments = $state<WireSeg[]>([]);
+  let nodes = $state<WireNode[]>([]);
+  let wireTotal = $state(1); // total run length, for mapping charge → distance
+
+  // How lit a piece is (0..1): the charge front (charge × total run) crossing
+  // it, ramped over `over` px so the current flows rather than snapping on.
+  const litAmt = (from: number, over: number) =>
+    Math.max(0, Math.min(1, (charge * wireTotal - from) / over));
+
+  function buildWire() {
+    const page = pageEl;
+    if (!page) return;
+    const pr = page.getBoundingClientRect();
+    // Coordinates are page-relative so the SVG can live inside .page. The svg
+    // draws with overflow:visible, so negative x (out to the CRT) is fine.
+    const rel = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left - pr.left;
+      const y = r.top - pr.top;
+      return { x, y, w: r.width, h: r.height, cx: x + r.width / 2, bottom: y + r.height };
+    };
+
+    const col = page.querySelector('main');
+    const blocks = [...page.querySelectorAll('.block')];
+    const crt = page.querySelector('.crt');
+    const foot = page.querySelector('footer');
+    if (!col || !foot || blocks.length === 0) return;
+
+    wireW = pr.width;
+    wireH = page.offsetHeight;
+
+    const c = rel(col);
+    const left = c.x;
+    const right = c.x + c.w;
+    // Vertical rails sit out in the margins so they keep well clear of the
+    // text, but stay on-screen — clamped to the viewport so nothing overflows
+    // on narrow layouts where the column nearly fills the width.
+    const vpLeft = -pr.left;
+    const vpRight = window.innerWidth - pr.left;
+    // Push the vertical rails well out into the margins to give the text room —
+    // scaled to the available margin, capped, and clamped on-screen so narrow
+    // layouts (where the column nearly fills the width) don't overflow.
+    const marginAvail = Math.min(left - vpLeft, vpRight - right);
+    const gap = Math.max(44, Math.min(150, marginAvail * 0.55));
+    // keep the rails (plus their ~21px joints) on-screen on narrow layouts
+    const railL = Math.max(vpLeft + 24, left - gap);
+    const railR = Math.min(vpRight - 24, right + gap);
+
+    // Where the wire plugs in: out of the bottom of the terminal, dropping
+    // behind the shelf before it routes to the spine. The CRT is retired below
+    // 720px (display:none → zero-size rect), so fall back to the column top.
+    const cr = crt ? rel(crt) : null;
+    const hasCrt = !!cr && cr.w > 0 && cr.h > 0;
+    let startX: number;
+    let startY: number;
+    let exitY: number;
+    if (hasCrt && cr) {
+      startX = cr.x + cr.w * 0.33; // centre of the device
+      startY = cr.y + cr.h * 0.4; // its base, where it meets the shelf
+      exitY = cr.y + cr.h * 0.56; // clear of the shelf below
+    } else {
+      startX = railL;
+      startY = c.y - 34;
+      exitY = c.y - 20;
+    }
+
+    // Vertices of the routed polyline: out the bottom of the terminal, over to
+    // the first rail, then the snake — drop to a divider, cross the column, drop
+    // the far rail — and finally down into the footer.
+    const dividers = blocks.map((b) => rel(b).y - 12); // sit in the gap above each block
+    const pts: Array<[number, number]> = [
+      [startX, startY],
+      [startX, exitY],
+      [railL, exitY]
+    ];
+    let side: 'l' | 'r' = 'l';
+    for (const y of dividers) {
+      pts.push([side === 'l' ? railL : railR, y]); // drop down this rail
+      pts.push([side === 'l' ? railR : railL, y]); // cross the column = a divider
+      side = side === 'l' ? 'r' : 'l';
+    }
+    const f = rel(foot);
+    pts.push([side === 'l' ? railL : railR, f.y + 14]);
+
+    // Turn the polyline into pipe segments + corner elbows, tracking distance
+    // along the run so the charge can light them in order. The elbow art is
+    // native LEFT+DOWN; each corner rotates it to face its two runs.
+    const travel = (a: number[], b: number[]) =>
+      Math.abs(b[0] - a[0]) >= Math.abs(b[1] - a[1])
+        ? b[0] > a[0]
+          ? 'R'
+          : 'L'
+        : b[1] > a[1]
+          ? 'D'
+          : 'U';
+    const opp: Record<string, string> = { U: 'D', D: 'U', L: 'R', R: 'L' };
+    const elbowRot: Record<string, number> = { DL: 0, LU: 90, RU: 180, DR: 270 };
+    const segs: WireSeg[] = [];
+    const nds: WireNode[] = [];
+    let dist = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, y0] = pts[i];
+      const [x1, y1] = pts[i + 1];
+      const len = Math.hypot(x1 - x0, y1 - y0);
+      if (len < 1) continue; // skip the zero-length lead-in on narrow layouts
+      const dir: 'h' | 'v' = Math.abs(x1 - x0) >= Math.abs(y1 - y0) ? 'h' : 'v';
+      segs.push({ dir, x: Math.min(x0, x1), y: Math.min(y0, y1), len, s: dist });
+      const at = dist + len;
+      if (i < pts.length - 2) {
+        // corner elbow: arms face the incoming and outgoing runs
+        const inc = travel(pts[i], pts[i + 1]);
+        const out = travel(pts[i + 1], pts[i + 2]);
+        const key = [opp[inc], out].sort().join('');
+        nds.push({ kind: 'joint', x: x1, y: y1, at, rot: elbowRot[key] ?? 0 });
+      } else {
+        // Frayed sparking end, pointed the way the last segment travels.
+        const rot = dir === 'v' ? (y1 > y0 ? 90 : -90) : x1 > x0 ? 0 : 180;
+        nds.push({ kind: 'end', x: x1, y: y1, at, rot });
+      }
+      dist += len;
+    }
+    segments = segs;
+    nodes = nds;
+    wireTotal = Math.max(1, dist);
+    updateCharge();
+  }
+
+  function updateCharge() {
+    if (reduceMotion) {
+      charge = 1;
+      return;
+    }
+    const doc = document.documentElement;
+    const scrollable = doc.scrollHeight - window.innerHeight;
+    charge = scrollable > 0 ? Math.min(1, Math.max(0, window.scrollY / scrollable)) : 1;
+  }
+
+  function onScroll() {
+    if (scrollRaf) return;
+    scrollRaf = requestAnimationFrame(() => {
+      scrollRaf = 0;
+      updateCharge();
+    });
+  }
+
   function playClick(on: boolean) {
     const el = on ? audioOn : audioOff;
     if (!el) return;
@@ -109,6 +275,7 @@
     document.body.classList.add('room');
 
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    reduceMotion = prefersReduced;
     const gestures = ['pointerdown', 'keydown', 'touchstart'] as const;
     const disarm = () => gestures.forEach((g) => window.removeEventListener(g, onGesture));
 
@@ -130,11 +297,29 @@
 
     runCrt(); // the terminal in the corner starts its looping session
 
+    // Build the bench wire from the real layout, then keep it glued to the
+    // content: re-measure whenever the page resizes (fonts, images, reflow) or
+    // the viewport changes, and charge it as the reader scrolls.
+    requestAnimationFrame(buildWire);
+    if (pageEl && 'ResizeObserver' in window) {
+      wireRO = new ResizeObserver(() => buildWire());
+      wireRO.observe(pageEl);
+    }
+    const onResize = () => buildWire();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('load', onResize);
+    if (!prefersReduced) window.addEventListener('scroll', onScroll, { passive: true });
+
     return () => {
       if (timer) clearTimeout(timer);
       clearTimeout(surgeTimer);
       crtRunning = false;
       disarm();
+      wireRO?.disconnect();
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('load', onResize);
+      window.removeEventListener('scroll', onScroll);
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
       document.body.classList.remove('room');
     };
   });
@@ -146,19 +331,6 @@
   // The toggle starts the low room-tone loop; prop hovers play one-shots.
   let soundOn = $state(false);
   let roomTone = $state<HTMLAudioElement | undefined>(undefined);
-  const propAudio = new Map<string, HTMLAudioElement>();
-
-  function playProp(sound: string | undefined) {
-    if (!soundOn || !sound) return;
-    let el = propAudio.get(sound);
-    if (!el) {
-      el = new Audio(`${base}/audio/${sound}.mp3`);
-      el.volume = 0.35;
-      propAudio.set(sound, el);
-    }
-    el.currentTime = 0;
-    el.play().catch(() => {});
-  }
 
   $effect(() => {
     const el = roomTone;
@@ -173,39 +345,9 @@
     }
   });
 
-  // Margin props — objects strewn down both margins, independent of the text.
-  // `top` is a vertical position down the whole page; `off` is how deep into
-  // the margin it sits; `size` varies for a sense of depth. Existing
-  // illustrations stand in as placeholders; `want` is the real asset to draw
-  // (see the illustration brief). `motion` is a CSS hover animation; `sound`
-  // is a one-shot in static/audio/<sound>.mp3 (plays only when sound is on).
-  type Prop = {
-    name: string;
-    want?: string;
-    side: 'l' | 'r';
-    top: string;
-    off: string;
-    size: string;
-    motion: string;
-    sound?: string;
-  };
-  const scatter: Prop[] = [
-    { name: 'soldering-iron', side: 'l', top: '7%', off: '3.5rem', size: '104px', motion: 'sway', sound: 'tool' },
-    { name: 'plant-pcb', want: 'oscilloscope', side: 'r', top: '12%', off: '1.5rem', size: '122px', motion: 'flicker', sound: 'scope' },
-    { name: 'cassette', side: 'l', top: '21%', off: '6rem', size: '88px', motion: 'sway', sound: 'reel' },
-    { name: 'books', want: 'floppy-stack', side: 'r', top: '28%', off: '5rem', size: '108px', motion: 'jitter', sound: 'floppy' },
-    { name: 'ivy', want: 'debug-moth', side: 'l', top: '37%', off: '1.5rem', size: '132px', motion: 'flutter', sound: 'wing' },
-    { name: 'mug', side: 'r', top: '45%', off: '3.5rem', size: '96px', motion: 'steam', sound: 'sip' },
-    { name: 'plant-pcb', side: 'l', top: '54%', off: '4.5rem', size: '86px', motion: 'flicker', sound: 'led' },
-    { name: 'mug', want: 'rubber-duck', side: 'r', top: '61%', off: '1.5rem', size: '108px', motion: 'jitter', sound: 'squeak' },
-    { name: 'books', side: 'l', top: '70%', off: '2.5rem', size: '100px', motion: 'sway', sound: 'page' },
-    { name: 'cassette', want: 'terminal-pot', side: 'r', top: '77%', off: '5.5rem', size: '92px', motion: 'blink', sound: 'key' },
-    { name: 'soldering-iron', side: 'l', top: '86%', off: '4rem', size: '94px', motion: 'jitter', sound: 'tool' },
-    { name: 'ivy', side: 'r', top: '91%', off: '2.5rem', size: '120px', motion: 'flutter', sound: 'wing' }
-  ];
-
-  // Everything you can find: scattered props, five titles, the lamp, the surge, the CRT.
-  const total = scatter.length + 5 + 3;
+  // Everything you can find: five section titles, the lamp, the surge, the CRT,
+  // and the SalesAPE mascot on the pegboard.
+  const total = 5 + 3 + 1;
 
   // Dust motes drifting in the lamplight. Deterministic positions so SSR and
   // the client agree (no hydration mismatch from Math.random).
@@ -363,31 +505,6 @@
   <span class="counter-caret">▌</span>
 </div>
 
-{#snippet bench(items: Prop[])}
-  {#each items as p, i}
-    <span
-      class="marker marker-{p.side}"
-      style="top:{p.top}; --off:{p.off}; width:{p.size}"
-      aria-hidden="true"
-      onpointerenter={() => {
-        playProp(p.sound);
-        discover(`prop-${i}`);
-      }}
-    >
-      <img class="prop-img {p.motion}" src={img(p.name)} alt="" />
-    </span>
-  {/each}
-{/snippet}
-
-{#snippet wings(vl: number, vr: number, i: number)}
-  <span class="wing wing-l v{vl}" aria-hidden="true">
-    <span class="spark" style="--idle-d: -{(vl * 1.3 + i * 0.9).toFixed(1)}s"></span>
-  </span>
-  <span class="wing wing-r v{vr}" aria-hidden="true">
-    <span class="spark" style="--idle-d: -{(vr * 1.3 + i * 0.9 + 2.4).toFixed(1)}s"></span>
-  </span>
-{/snippet}
-
 {#snippet entryList(items: Entry[])}
   <ul class="entries">
     {#each items as e}
@@ -407,10 +524,57 @@
   </ul>
 {/snippet}
 
-<div class="page" class:surging>
-  <!-- Objects strewn down the margins, scattered free of the text. -->
-  <div class="scatter" aria-hidden="true">
-    {@render bench(scatter)}
+<div class="page" class:surging bind:this={pageEl}>
+  <!-- Workshop pegboard down each margin: a framed brass panel, its dotted
+       field tiled to the full height. Fixed to the viewport edges so it reads
+       as the wall the lit bench stands against. Retired below 1080px, where
+       the margins are too narrow to hold it clear of the column. -->
+  <div class="pegwall pegwall-l" aria-hidden="true"></div>
+  <div class="pegwall pegwall-r" aria-hidden="true"></div>
+
+  <!-- The bench wire: brass pipe plugged into the terminal, snaking down the
+       column and crossing it at each section boundary (the crossings are the
+       dividers). Built from sprite tiles — a tiled shaft per run, a joint at
+       each corner, a frayed sparking end. Each piece lights off→on as the
+       scroll-current flows down it, powering the page up. -->
+  <div
+    class="wire"
+    class:reduce={reduceMotion}
+    style="width:{wireW}px; height:{wireH}px"
+    aria-hidden="true"
+  >
+    {#each segments as seg (seg.s)}
+      <!-- runs are inset 9px at each end so they butt right into the bend arc
+           (which reaches ~11px inward), for a seamless join with no overshoot -->
+      <div
+        class="wseg {seg.dir}"
+        style="left:{seg.dir === 'h' ? seg.x + 9 : seg.x - 7}px; top:{seg.dir === 'h'
+          ? seg.y - 7
+          : seg.y + 9}px; width:{seg.dir === 'h'
+          ? Math.max(0, seg.len - 18)
+          : 14}px; height:{seg.dir === 'h' ? 14 : Math.max(0, seg.len - 18)}px;"
+      >
+        <span class="pipe off"></span>
+        <span class="pipe on" style="opacity:{litAmt(seg.s, seg.len)}"></span>
+      </div>
+    {/each}
+    {#each nodes as n (n.at)}
+      {#if n.kind === 'joint'}
+        <!-- corner elbow, rotated to face its two runs -->
+        <div class="welbow" style="left:{n.x - 11}px; top:{n.y - 11}px; transform:rotate({n.rot}deg);">
+          <span class="el off"></span>
+          <span class="el on" style="opacity:{litAmt(n.at - 20, 44)}"></span>
+        </div>
+      {:else}
+        <div
+          class="wend"
+          style="left:{n.x}px; top:{n.y}px; transform:translate(-50%, -50%) rotate({n.rot}deg);"
+        >
+          <span class="ed off"></span>
+          <span class="ed on" style="opacity:{litAmt(n.at - 30, 40)}"></span>
+        </div>
+      {/if}
+    {/each}
   </div>
 
   <!-- Old CRT terminal on a shelf in the top-left margin. The sketch's dark
@@ -450,9 +614,7 @@
   </div>
 
   <header class="top">
-    <a class="mark" href="#top" aria-label="Matt Roche — home">
-      <img src={img('neon-workshop')} alt="" aria-hidden="true" />
-    </a>
+    <a class="mark" href="#top">Matt Roche</a>
     <nav aria-label="Sections">
       <a href="#work">Work</a>
       <a href="#projects">Tinkering</a>
@@ -471,25 +633,29 @@
     </section>
 
     <section id="work" class="block">
-      {@render wings(1, 3, 0)}
       <h2 class="label" use:binary={'work'}>Work</h2>
+      <!-- The SalesAPE mascot, bolted to the left pegboard beside the entry: a
+           headset-wearing workshop ape that hangs idle and chatters on hover
+           (and gives a shout when the board surges). -->
+      <button
+        class="pegape"
+        aria-label="SalesAPE mascot"
+        onpointerenter={() => discover('ape')}
+      ></button>
       {@render entryList(now)}
     </section>
 
     <section class="block">
-      {@render wings(4, 2, 1)}
       <h2 class="label" use:binary={'previously'}>Previously</h2>
       {@render entryList(previously)}
     </section>
 
     <section id="projects" class="block">
-      {@render wings(2, 4, 2)}
       <h2 class="label" use:binary={'tinkering'}>Tinkering</h2>
       {@render entryList(projects)}
     </section>
 
     <section id="writing" class="block">
-      {@render wings(3, 1, 3)}
       <h2 class="label" use:binary={'writing'}>Writing</h2>
       <ul class="entries">
         <li>
@@ -503,7 +669,6 @@
     </section>
 
     <section id="contact" class="block contact">
-      {@render wings(1, 4, 4)}
       <h2 class="label" use:binary={'contact'}>Get in touch</h2>
       <p>
         The kettle&rsquo;s usually on. Best by email — I read everything, and reply to most.
@@ -821,11 +986,17 @@
     gap: 1rem;
     padding: 1.75rem 0 0;
   }
-  .mark img {
-    height: 1.7rem;
-    width: auto;
-    display: block;
-    opacity: 0.9;
+  .mark {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink);
+    opacity: 0.92;
+    transition: color 180ms ease;
+  }
+  .mark:hover {
+    color: var(--accent-deep);
   }
   .top nav {
     display: flex;
@@ -845,6 +1016,8 @@
 
   /* ── Intro ───────────────────────────────────────────────────────────── */
   main {
+    position: relative;
+    z-index: 1; /* the reading column sits above the bench wire */
     padding-top: clamp(3rem, 12vh, 7rem);
   }
   .intro {
@@ -891,252 +1064,114 @@
     position: relative;
     padding: clamp(2rem, 5vw, 3rem) 0;
   }
-  /* Section dividers: a straight copper bus across the text column (with vias
-     and small stubs), which then elbows down into the margins via the .wing
-     pieces — horizontal, then vertical, then horizontal — one routed path. */
-  .block::before {
-    content: "";
-    position: absolute;
-    top: -12px;
-    left: 0;
-    right: 0;
-    height: 24px;
-    pointer-events: none;
-    opacity: 0.5;
-    background-position: left center;
-    background-repeat: repeat-x;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='24'%3E%3Cg stroke='%23b48a52' stroke-width='1.1' fill='none'%3E%3Cpath d='M0 12H200'/%3E%3Cpath d='M50 12V5'/%3E%3Cpath d='M120 12V19'/%3E%3C/g%3E%3Cg fill='%23b48a52'%3E%3Ccircle cx='30' cy='12' r='2.2'/%3E%3Ccircle cx='100' cy='12' r='2.2'/%3E%3Ccircle cx='170' cy='12' r='2.2'/%3E%3Ccircle cx='50' cy='5' r='1.8'/%3E%3Ccircle cx='120' cy='19' r='1.8'/%3E%3C/g%3E%3C/svg%3E");
-  }
-  /* The margin elbows: the bus continues past the column edge, turns down,
-     then runs horizontal again — vertical-then-horizontal, as a continuation
-     of the same trace. Mirrored on the right. */
-  .wing {
-    position: absolute;
-    top: -14px;
-    width: 460px;
-    height: 140px;
-    pointer-events: none;
-    opacity: 0.5;
-    z-index: 0;
-    background-repeat: no-repeat;
-    background-position: left top;
-  }
-  .wing-l {
-    right: 100%;
-  }
-  .wing-r {
-    left: 100%;
-    transform: scaleX(-1);
-  }
-  /* Four distinct routings — long vertical drops, different turn points — so
-     no two dividers read the same. Each variant's spark path matches its art. */
-  .wing.v1 {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='460' height='140'%3E%3Cg stroke='%23b48a52' stroke-width='1.1' fill='none'%3E%3Cpath d='M460 14H418V104H28'/%3E%3Cpath d='M300 104V90H286'/%3E%3C/g%3E%3Cg fill='%23b48a52'%3E%3Ccircle cx='418' cy='14' r='2.1'/%3E%3Ccircle cx='418' cy='104' r='2.1'/%3E%3Ccircle cx='28' cy='104' r='2.1'/%3E%3Ccircle cx='150' cy='104' r='1.8'/%3E%3Ccircle cx='286' cy='90' r='1.7'/%3E%3C/g%3E%3C/svg%3E");
-  }
-  .wing.v2 {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='460' height='140'%3E%3Cg stroke='%23b48a52' stroke-width='1.1' fill='none'%3E%3Cpath d='M460 14H402V78H150V112H64'/%3E%3Cpath d='M250 78V64H236'/%3E%3C/g%3E%3Cg fill='%23b48a52'%3E%3Ccircle cx='402' cy='14' r='2.1'/%3E%3Ccircle cx='402' cy='78' r='2.1'/%3E%3Ccircle cx='150' cy='78' r='2.1'/%3E%3Ccircle cx='150' cy='112' r='2.1'/%3E%3Ccircle cx='64' cy='112' r='2.1'/%3E%3Ccircle cx='236' cy='64' r='1.7'/%3E%3Ccircle cx='300' cy='78' r='1.7'/%3E%3C/g%3E%3C/svg%3E");
-  }
-  /* v3 and v4 route UP from the divider into the margin above it. */
-  .wing.v3,
-  .wing.v4 {
-    top: -126px;
-  }
-  .wing.v3 {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='460' height='140'%3E%3Cg stroke='%23b48a52' stroke-width='1.1' fill='none'%3E%3Cpath d='M460 126H424V28H44'/%3E%3Cpath d='M300 28V42H286'/%3E%3C/g%3E%3Cg fill='%23b48a52'%3E%3Ccircle cx='424' cy='126' r='2.1'/%3E%3Ccircle cx='424' cy='28' r='2.1'/%3E%3Ccircle cx='44' cy='28' r='2.1'/%3E%3Ccircle cx='160' cy='28' r='1.8'/%3E%3Ccircle cx='286' cy='42' r='1.7'/%3E%3C/g%3E%3C/svg%3E");
-  }
-  .wing.v4 {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='460' height='140'%3E%3Cg stroke='%23b48a52' stroke-width='1.1' fill='none'%3E%3Cpath d='M460 126H398V58H150V22H58'/%3E%3Cpath d='M250 58V44H236'/%3E%3C/g%3E%3Cg fill='%23b48a52'%3E%3Ccircle cx='398' cy='126' r='2.1'/%3E%3Ccircle cx='398' cy='58' r='2.1'/%3E%3Ccircle cx='150' cy='58' r='2.1'/%3E%3Ccircle cx='150' cy='22' r='2.1'/%3E%3Ccircle cx='58' cy='22' r='2.1'/%3E%3Ccircle cx='236' cy='44' r='1.7'/%3E%3Ccircle cx='300' cy='58' r='1.7'/%3E%3C/g%3E%3C/svg%3E");
-  }
 
-  /* The current spark: a glowing dot that rides the wing's routed path when
-     the surge fires, so the current continues from the column out the wings. */
-  .spark {
+  /* ── The bench wire ──────────────────────────────────────────────────────
+     Brass pipe built from sprite tiles, positioned from the real layout in
+     script. Lives inside the reading column but draws with overflow visible so
+     it can reach out to the terminal in the margin and cross at each divider.
+     Every piece stacks an "off" art layer with an "on" layer faded in by the
+     scroll-charge, so current lights the pipe as it flows down. */
+  .wire {
     position: absolute;
     top: 0;
     left: 0;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
+    z-index: 0; /* behind the text (main sits at z-index 1), above the bg */
+    overflow: visible;
     pointer-events: none;
-    opacity: 0;
-    mix-blend-mode: screen;
-    background: radial-gradient(
-      closest-side,
-      rgba(214, 248, 255, 0.95),
-      rgba(120, 205, 235, 0.5) 45%,
-      transparent 75%
-    );
-    offset-rotate: 0deg;
-    /* Idle current trickles out the wings on a loop; --idle-d staggers each
-       wing so they don't all fire together. Surge overrides this below. */
-    animation: spark-idle 4.5s linear infinite;
-    animation-delay: var(--idle-d, 0s);
+    opacity: 0.72; /* a quiet fixture in the room, not a dominant feature */
   }
-  @keyframes spark-idle {
-    0% {
-      offset-distance: 0%;
-      opacity: 0;
-    }
-    3% {
-      opacity: 0.85;
-    }
-    16% {
-      offset-distance: 100%;
-      opacity: 0.85;
-    }
-    20%,
-    100% {
-      offset-distance: 100%;
-      opacity: 0;
-    }
-  }
-  .wing.v1 .spark {
-    offset-path: path("M460 14H418V104H28");
-  }
-  .wing.v2 .spark {
-    offset-path: path("M460 14H402V78H150V112H64");
-  }
-  .wing.v3 .spark {
-    offset-path: path("M460 126H424V28H44");
-  }
-  .wing.v4 .spark {
-    offset-path: path("M460 126H398V58H150V22H58");
-  }
-  .page.surging .wing {
-    animation: trace-flare 1s ease-out;
-  }
-  .page.surging .spark {
-    animation: spark-run 0.7s ease-in;
-  }
-  .page.surging .wing-l .spark {
-    animation-delay: 0.12s;
-  }
-  .page.surging .wing-r .spark {
-    animation-delay: 0.5s;
-  }
-  @keyframes spark-run {
-    0% {
-      offset-distance: 0%;
-      opacity: 0;
-    }
-    12% {
-      opacity: 1;
-    }
-    82% {
-      opacity: 1;
-    }
-    100% {
-      offset-distance: 100%;
-      opacity: 0;
-    }
-  }
-  /* A pulse of electric current runs along each copper trace. `screen` blend
-     makes it read as added light over the trace; staggered delays make it
-     look like current coursing through the board rather than a metronome. */
-  .block::after {
-    content: "";
+  .wseg {
     position: absolute;
-    top: -2px;
-    left: 0;
-    right: 0;
-    height: 4px;
-    pointer-events: none;
-    background-image: radial-gradient(
-      closest-side,
-      rgba(196, 242, 255, 0.95),
-      rgba(120, 205, 235, 0.4) 42%,
-      transparent 76%
-    );
+  }
+  .wseg .pipe {
+    position: absolute;
+    inset: 0;
+    border-style: solid;
+    border-color: transparent;
+  }
+  /* Straight runs use the whole brass-pipe sprite via border-image (9-slice):
+     the coupling ends stay fixed while the plain shaft tiles to any length, so
+     every run keeps its coupling joins on both ends. */
+  .wseg.h .pipe {
+    border-width: 2px 9px;
+    border-image-slice: 5 25 5 24 fill;
+    border-image-repeat: repeat stretch;
+  }
+  .wseg.v .pipe {
+    border-width: 9px 2px;
+    border-image-slice: 24 5 24 5 fill;
+    border-image-repeat: stretch repeat;
+  }
+  .wseg.h .pipe.off {
+    border-image-source: url('/wire/straight_h_off.png');
+  }
+  .wseg.h .pipe.on {
+    border-image-source: url('/wire/straight_h_on.png');
+  }
+  .wseg.v .pipe.off {
+    border-image-source: url('/wire/straight_v_off.png');
+  }
+  .wseg.v .pipe.on {
+    border-image-source: url('/wire/straight_v_on.png');
+  }
+  .pipe.on {
+    mix-blend-mode: screen; /* the warm glow adds light over the off layer */
+  }
+
+  /* Corner elbows and the frayed end sit above the shafts to cap the seams. */
+  .welbow {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    z-index: 1; /* the bend arc rides above the shafts */
+  }
+  .wend {
+    position: absolute;
+    width: 66px;
+    height: 36px;
+    transform-origin: center;
+  }
+  .welbow .el,
+  .wend .ed{
+    position: absolute;
+    inset: 0;
     background-repeat: no-repeat;
-    background-size: 90px 100%;
-    background-position: -90px 0;
+    background-position: center;
+    background-size: contain;
+  }
+  .welbow .el.off {
+    background-image: url('/wire/elbow_off.png');
+  }
+  .welbow .el.on {
+    background-image: url('/wire/elbow_on.png');
+  }
+  .wend .ed.off {
+    background-image: url('/wire/end_off.png');
+  }
+  .wend .ed.on {
+    background-image: url('/wire/end_on.png');
+  }
+  .el.on,
+  .ed.on {
     mix-blend-mode: screen;
-    animation: current 4.5s linear infinite;
-  }
-  .block:nth-of-type(2)::after {
-    animation-delay: -0.4s;
-  }
-  .block:nth-of-type(3)::after {
-    animation-delay: -2.4s;
-  }
-  .block:nth-of-type(4)::after {
-    animation-delay: -1.3s;
-  }
-  .block:nth-of-type(5)::after {
-    animation-delay: -3.1s;
-  }
-  .block:nth-of-type(6)::after {
-    animation-delay: -1.9s;
-  }
-  @keyframes current {
-    0% {
-      background-position: -90px 0;
-    }
-    /* travel across in the first 55%, then rest off-screen so pulses blip
-       periodically with a gap between them */
-    55%,
-    100% {
-      background-position: calc(100% + 90px) 0;
-    }
   }
 
-  /* ── Power surge: the board jolts to life ────────────────────────────────
-     The copper traces flare and a fat, bright pulse rips down every trace in
-     a quick cascade from top to bottom. */
-  .page.surging .block::before {
-    animation: trace-flare 1s ease-out;
+  /* Power surge: the whole lit pipe flares brighter for a beat. */
+  .page.surging .pipe.on,
+  .page.surging .el.on,
+  .page.surging .ed.on {
+    animation: wire-flare 0.9s ease-out;
   }
-  /* Brightness flares the whole trace; the layered cyan drop-shadows bloom
-     hardest around the solid via dots, so each solder point pops as it's hit. */
-  @keyframes trace-flare {
-    0% {
-      filter: brightness(1);
-    }
-    16% {
-      filter: brightness(2.9) drop-shadow(0 0 3px rgba(212, 248, 255, 0.95))
-        drop-shadow(0 0 10px rgba(150, 232, 255, 0.85));
-    }
+  @keyframes wire-flare {
+    0%,
     100% {
       filter: brightness(1);
     }
-  }
-  .page.surging .block::after {
-    animation: surge 0.85s ease-out;
-    background-size: 220px 100%;
-  }
-  /* fire the traces top-to-bottom for a cascade rather than all at once */
-  .page.surging .block:nth-of-type(2)::after {
-    animation-delay: 0s;
-  }
-  .page.surging .block:nth-of-type(3)::after {
-    animation-delay: 0.08s;
-  }
-  .page.surging .block:nth-of-type(4)::after {
-    animation-delay: 0.16s;
-  }
-  .page.surging .block:nth-of-type(5)::after {
-    animation-delay: 0.24s;
-  }
-  .page.surging .block:nth-of-type(6)::after {
-    animation-delay: 0.32s;
-  }
-  @keyframes surge {
-    0% {
-      background-position: -220px 0;
-      filter: brightness(2.1) saturate(1.5);
-    }
-    100% {
-      background-position: calc(100% + 220px) 0;
-      filter: brightness(2.1) saturate(1.5);
+    18% {
+      filter: brightness(1.9) saturate(1.2);
     }
   }
 
-  /* Hide the margin elbows where there's no margin room for them. */
-  @media (max-width: 1080px) {
-    .wing {
-      display: none;
-    }
-  }
   /* The lamp flickers and the room brightness jumps as the current hits. */
   .ambient.surging {
     animation: ambient-flash 0.8s ease-out;
@@ -1172,113 +1207,88 @@
     }
   }
 
-  /* Objects strewn down both margins, free of the text. The layer spans the
-     whole page; each prop is placed by vertical % (top) and margin depth
-     (--off). The wrapper owns position + the right-side mirror; the inner
-     image owns the hover motion, so the two transforms never fight. */
-  .scatter {
+  /* ── Workshop pegboard walls ─────────────────────────────────────────────
+     A framed brass pegboard panel pinned to each viewport edge — the wall the
+     lit bench stands against. Drawn as a 9-slice border-image of the strip
+     sprite: the frame + screw rows are the fixed caps, and the dotted field
+     tiles down the middle to any height. Slice boundaries sit at dot-row
+     midpoints, so the vertical tiling has no visible seam. Behind all content;
+     ignores the pointer; sunk a little into shadow so it never outshines the
+     reading column. Retired below 1080px where the margins can't clear it. */
+  .pegwall {
     position: absolute;
-    inset: 0;
-    pointer-events: none;
+    /* Start below the terminal so the hero stays open, and run to the page
+       foot. The offset tracks the terminal's rendered height (its width, which
+       is clamp(230,25vw,318), by the 2:3 art ratio → ×1.5), plus a small gap. */
+    top: calc(clamp(345px, 37.5vw, 477px) - 0.5rem);
+    bottom: 0;
     z-index: 0;
+    width: clamp(148px, 15vw, 216px);
+    pointer-events: none;
+    border-style: solid;
+    border-width: 52px 16px 58px 16px;
+    border-color: transparent;
+    border-image-source: url('/pegboard/board_v.png');
+    border-image-slice: 52 16 58 16 fill;
+    border-image-repeat: stretch round;
+    opacity: 0.88;
+    filter: brightness(0.8) saturate(0.9);
   }
-  .marker {
+  /* Centred within each margin. The column is centred at 42rem, so the margin
+     runs from the viewport edge to (50vw − 21rem); half of (that margin minus
+     the board width) sits the board dead-centre in the gap, self-adjusting as
+     the viewport changes. */
+  .pegwall-l {
+    left: calc((21rem - 50vw - clamp(148px, 15vw, 216px)) / 2);
+  }
+  .pegwall-r {
+    right: calc((21rem - 50vw - clamp(148px, 15vw, 216px)) / 2);
+  }
+
+  /* SalesAPE mascot: a 7-frame sprite strip (362×436 cells) played with
+     steps(). Hangs on the left pegboard, centred on the board and level with
+     the SalesAPE entry. Idle it sways from its bracket; on hover — or when the
+     board surges — it chatters through the frames from calm to a shout. */
+  .pegape {
     position: absolute;
-    display: block;
-    width: clamp(120px, 11vw, 168px);
-    line-height: 0;
-    pointer-events: auto;
+    top: 0.5rem;
+    /* Centre on the left pegboard: the board sits at the middle of the left
+       margin; this places the mascot's centre there, from inside the column
+       (which is inset 1.5rem from the page edge). */
+    left: calc((21rem - 50vw) / 2 - 70px - 1.5rem);
+    width: 140px;
+    height: 169px;
+    z-index: 1; /* above the board, below nothing else here */
+    background-image: url('/pegboard/ape_strip.png');
+    background-repeat: no-repeat;
+    background-size: 980px 169px; /* 7 × 140 wide */
+    background-position: -140px 0; /* rest on frame 2 (calm, mouth closed) */
+    transform-origin: 50% 8%; /* swing from the top bracket */
+    animation: ape-sway 4.5s ease-in-out infinite;
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.55));
+    cursor: pointer;
   }
-  .marker-l {
-    right: calc(100% + var(--off, 2rem));
+  .pegape:hover,
+  .page.surging .pegape {
+    animation:
+      ape-sway 4.5s ease-in-out infinite,
+      ape-talk 0.9s steps(7) infinite;
   }
-  .marker-r {
-    left: calc(100% + var(--off, 2rem));
-    transform: scaleX(-1);
-  }
-  .prop-img {
-    width: 100%;
-    height: auto;
-    transform-origin: 50% 90%;
-    /* Dark cast shadow + a faint warm rim so objects lift off the dark wood. */
-    filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.55))
-      drop-shadow(0 0 14px rgba(255, 182, 110, 0.12));
-    transition: filter 220ms ease;
-  }
-  .marker:hover .prop-img {
-    filter: drop-shadow(0 12px 22px rgba(0, 0, 0, 0.6))
-      drop-shadow(0 0 16px rgba(255, 196, 120, 0.55));
-  }
-  /* Each prop answers a hover in its own way. */
-  .marker:hover .sway {
-    animation: sway 1.6s ease-in-out infinite;
-  }
-  .marker:hover .flicker {
-    animation: flicker 0.9s steps(1) infinite;
-  }
-  .marker:hover .jitter {
-    animation: jitter 0.16s steps(2) infinite;
-  }
-  .marker:hover .flutter {
-    animation: flutter 0.5s ease-in-out infinite;
-  }
-  .marker:hover .blink {
-    animation: blink 0.7s steps(1) infinite;
-  }
-  .marker:hover .steam {
-    animation: steam 2.4s ease-in-out infinite;
-  }
-  @keyframes sway {
+  @keyframes ape-sway {
     0%,
     100% {
-      transform: rotate(-3.5deg);
+      transform: rotate(-2deg);
     }
     50% {
-      transform: rotate(3.5deg);
+      transform: rotate(2deg);
     }
   }
-  @keyframes flicker {
-    0%,
-    100% {
-      filter: brightness(1) drop-shadow(0 0 6px rgba(120, 220, 160, 0.5));
+  @keyframes ape-talk {
+    from {
+      background-position-x: 0;
     }
-    50% {
-      filter: brightness(1.35) drop-shadow(0 0 12px rgba(120, 220, 160, 0.8));
-    }
-  }
-  @keyframes jitter {
-    0% {
-      transform: translate(-1px, 0.5px) rotate(-1deg);
-    }
-    100% {
-      transform: translate(1px, -0.5px) rotate(1deg);
-    }
-  }
-  @keyframes flutter {
-    0%,
-    100% {
-      transform: translateY(0) rotate(-6deg);
-    }
-    50% {
-      transform: translateY(-6px) rotate(6deg);
-    }
-  }
-  @keyframes blink {
-    0%,
-    100% {
-      filter: brightness(1);
-    }
-    50% {
-      filter: brightness(1.4) drop-shadow(0 0 8px rgba(255, 196, 120, 0.7));
-    }
-  }
-  @keyframes steam {
-    0%,
-    100% {
-      transform: translateY(0) scale(1);
-    }
-    50% {
-      transform: translateY(-2px) scale(1.02);
+    to {
+      background-position-x: -980px;
     }
   }
   /* Section titles read as a shell prompt — the software identity in the type. */
@@ -1490,9 +1500,10 @@
   }
 
   /* ── Responsive ──────────────────────────────────────────────────────── */
-  /* Below ~1080px there isn't room in the margin for props beside the column. */
+  /* Below ~1080px the margins are too narrow to hold the pegboard clear of
+     the reading column, so the walls retire. */
   @media (max-width: 1080px) {
-    .marker {
+    .pegwall {
       display: none;
     }
   }
@@ -1522,21 +1533,19 @@
       transition: none;
     }
     .mote,
-    .marker:hover .prop-img,
     .tagline::after,
     .counter-caret,
     .crt-caret,
     .crt-screen::after,
-    .block::after,
-    .spark,
-    .page.surging .block::before,
-    .page.surging .wing,
+    .page.surging .pipe.on,
+    .page.surging .el.on,
+    .page.surging .ed.on,
     .ambient.surging,
-    .pendant.surging .pool {
+    .pendant.surging .pool,
+    .pegape,
+    .pegape:hover,
+    .page.surging .pegape {
       animation: none;
-    }
-    .block::after {
-      display: none;
     }
   }
 </style>
