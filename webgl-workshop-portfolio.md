@@ -84,11 +84,15 @@ The Jan brief's page structure and the §1 station catalogue describe the same c
 | Notes (if you write) | Open book on the desk; flips on hover |
 | Contact | Letter on the desk + the door |
 
-### The feel target
+### Vibe / feel target
 
 A quiet craftsman with sharp edges. Values durability, taste, reasoning, independence. **Not a marketer. Not an agency.**
 
 If Simon Sarris had a page about AI systems, it'd look like this.
+
+**Atmosphere** — the feeling of entering a warm workshop/studio with lots of tinkering. Sketch / illustration feel. Old-tech vibe — worn, lived-in, deliberate — rather than new and flashy.
+
+**Interactivity** — playful. Easter-egg interactions are in progress; reward curiosity without breaking the calm.
 
 ---
 
