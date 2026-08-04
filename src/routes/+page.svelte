@@ -480,11 +480,28 @@
 </script>
 
 <svelte:head>
-  <title>Matt Roche — product engineer</title>
+  <title>Matt Roche - Product Engineer</title>
   <meta
     name="description"
     content="Matt Roche - product engineer, ten years in software & start-ups. AI agents at SalesAPE; founder of SuperStack and Hyper Product Club; previously Move Technologies."
   />
+  <!-- Social cards. The image is the workshop at night (static/og.jpg);
+       absolute URLs, as scrapers require them. -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://rochehq.com/" />
+  <meta property="og:title" content="Matt Roche - Product Engineer" />
+  <meta
+    property="og:description"
+    content="Matt Roche - product engineer, ten years in software & start-ups. AI agents at SalesAPE; founder of SuperStack and Hyper Product Club; previously Move Technologies."
+  />
+  <meta property="og:image" content="https://rochehq.com/og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta
+    property="og:image:alt"
+    content="Matt Roche's workshop at night - a lamplit bench of tools, plants and machines."
+  />
+  <meta name="twitter:card" content="summary_large_image" />
   <!-- Pre-hydration paint: the same warm-dark room that body.room applies on
        mount, served in the prerendered head so the first frame is never
        paper-white glowing through the veil's ember. Keep in sync with
