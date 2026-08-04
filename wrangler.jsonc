@@ -1,0 +1,16 @@
+// Cloudflare Workers config: serves the prerendered SvelteKit build as a
+// static-assets Worker on rochehq.com. Deployed by CI on pushes to main
+// (.github/workflows/deploy.yml) or manually with `npx wrangler deploy`.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rochehq",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "./build",
+    // Unknown paths get build/404.html — the SPA fallback adapter-static
+    // writes (see svelte.config.js), so client-side routes still boot.
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "rochehq.com", "custom_domain": true }],
+  "observability": { "enabled": true }
+}
