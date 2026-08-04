@@ -32,8 +32,10 @@
 }
 
 /* The landing page is a dark, warm workshop interior — lit by the lamp, with
-   the edges falling into shadow. Toggled on the <body> from the page on mount
-   (the reveal veil hides the pre-JS moment, so there's no flash). */
+   the edges falling into shadow. Toggled on the <body> from the page on mount;
+   the landing route also serves these values in its prerendered head (see the
+   svelte:head style in routes/+page.svelte — keep the two in sync) so the
+   pre-JS frame is already the dark room, not a white flash. */
 body.room {
   color-scheme: dark;
   --paper: #241a11;
@@ -45,8 +47,9 @@ body.room {
   --glow: rgba(255, 196, 120, 0.6);
   color: var(--ink);
   /* Traces and props run out into the margins; keep that from adding a
-     horizontal scrollbar. */
-  overflow-x: hidden;
+     horizontal scrollbar. (html clips too — see above — which is what
+     actually stops the panning on mobile.) */
+  overflow-x: clip;
   /* A warm-lit bench down the middle, falling into cool shadow at the edges —
      fixed, so the reading column stays lit at every scroll position rather
      than dropping into a black void below the hero. */
@@ -71,6 +74,14 @@ body.room::after {
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  /* Decorative props (the lamp's light pool, margin sprites) reach past the
+     viewport edge. Clip at the root so that never becomes horizontal panning —
+     body-level overflow-x alone is ignored by mobile Safari, and `clip`
+     forbids scrolling without creating a new scroll container. */
+  overflow-x: clip;
 }
 
 html,

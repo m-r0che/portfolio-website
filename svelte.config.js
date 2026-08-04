@@ -8,7 +8,10 @@ const config = {
     adapter: adapter({
       pages: 'build',
       assets: 'build',
-      fallback: 'index.html',
+      // SPA fallback for un-prerendered paths. Not index.html — that would
+      // overwrite the prerendered landing page with an empty shell (a white
+      // flash before JS boots).
+      fallback: '404.html',
       precompress: false,
       strict: true
     }),

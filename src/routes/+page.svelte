@@ -116,6 +116,13 @@
   function buildWire() {
     const page = pageEl;
     if (!page) return;
+    // The wire retires with the CRT it plugs into (display:none in CSS) —
+    // skip the geometry work rather than measure a layout nobody sees.
+    if (window.matchMedia('(max-width: 1239px)').matches) {
+      segments = [];
+      nodes = [];
+      return;
+    }
     const pr = page.getBoundingClientRect();
     // Coordinates are page-relative so the SVG can live inside .page. The svg
     // draws with overflow:visible, so negative x (out to the CRT) is fine.
@@ -127,7 +134,9 @@
     };
 
     const col = page.querySelector('main');
-    const blocks = [...page.querySelectorAll('.block')];
+    // Only the page's own sections — the SuperStack widget's cards also carry
+    // a (Tailwind) `block` class, and each one would otherwise get a divider.
+    const blocks = [...page.querySelectorAll('section.block')];
     const crt = page.querySelector('.crt');
     const foot = page.querySelector('footer');
     if (!col || !foot || blocks.length === 0) return;
@@ -274,6 +283,11 @@
     // Dark warm-workshop palette for this route only.
     document.body.classList.add('room');
 
+    // The CRT and the pegboard ape retire on narrower screens, so they leave
+    // the discovery hunt too (thresholds mirror the CSS media queries).
+    const mq = (q: string) => window.matchMedia(q).matches;
+    total = 6 + 2 + (mq('(min-width: 1240px)') ? 1 : 0) + (mq('(min-width: 1081px)') ? 3 : 0);
+
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     reduceMotion = prefersReduced;
     const gestures = ['pointerdown', 'keydown', 'touchstart'] as const;
@@ -296,6 +310,19 @@
     }
 
     runCrt(); // the terminal in the corner starts its looping session
+
+    // SuperStack review widget: load the hosted embed once, browser-only.
+    // The script self-initialises on load; if it's already on the page (a
+    // client-side return to this route), re-run its init for the fresh div.
+    const widgetSrc = 'https://widget.superst.ac/review-widget.js';
+    if (document.querySelector(`script[src="${widgetSrc}"]`)) {
+      (window as { createReviewWidget?: () => void }).createReviewWidget?.();
+    } else {
+      const s = document.createElement('script');
+      s.src = widgetSrc;
+      s.async = true;
+      document.head.appendChild(s);
+    }
 
     // Build the bench wire from the real layout, then keep it glued to the
     // content: re-measure whenever the page resizes (fonts, images, reflow) or
@@ -345,9 +372,12 @@
     }
   });
 
-  // Everything you can find: five section titles, the lamp, the surge, the CRT,
-  // and the SalesAPE mascot on the pegboard.
-  const total = 5 + 3 + 1;
+  // Everything you can find: six section titles, the lamp, the surge, the
+  // CRT, and the pegboard props (ape, superst.ac sign, Walle). The CRT
+  // retires below 1240px and the board props below 1081px (with the boards),
+  // so the hunt shrinks to match — set once on mount, mirroring the CSS
+  // breakpoints.
+  let total = $state(6 + 2 + 1 + 3);
 
   // Dust motes drifting in the lamplight. Deterministic positions so SSR and
   // the client agree (no hydration mismatch from Math.random).
@@ -404,10 +434,10 @@
   // ── CRT terminal: a looping shell "session" that types out the bio, with
   //    the green phosphor glow and scanlines drawn over the sketch's glass. ──
   const crtScript: { cmd: string; out: string }[] = [
-    { cmd: 'whoami', out: 'product builder, london' },
+    { cmd: 'whoami', out: 'product engineer, uk' },
     { cmd: 'cat now.md', out: 'AI agents @ salesape.ai' },
-    { cmd: 'ls ./past', out: 'superstack  move  movegb' },
-    { cmd: 'echo $ethos', out: 'built by hand, in the open' }
+    { cmd: 'ls ./past', out: 'movetech  wriggle' },
+    { cmd: 'echo $ethos', out: 'elegant and robust' }
   ];
   let crtOut = $state<string[]>([]);
   let crtCur = $state('~ $');
@@ -450,11 +480,39 @@
 </script>
 
 <svelte:head>
-  <title>Matt Roche — product builder</title>
+  <title>Matt Roche — product engineer</title>
   <meta
     name="description"
-    content="Matt Roche — a product builder in London. AI products at SalesAPE, SuperStack, Hyper Product Club; previously Move Technologies and MoveGB."
+    content="Matt Roche - product engineer, ten years in software & start-ups. AI agents at SalesAPE; founder of SuperStack and Hyper Product Club; previously Move Technologies."
   />
+  <!-- Pre-hydration paint: the same warm-dark room that body.room applies on
+       mount, served in the prerendered head so the first frame is never
+       paper-white glowing through the veil's ember. Keep in sync with
+       body.room in app.css. -->
+  {@html `<style>
+    html body {
+      color-scheme: dark;
+      --paper: #241a11;
+      --ink: #f3ead8;
+      --ink-dim: #bcab89;
+      --rule: rgba(241, 230, 210, 0.15);
+      --accent: #d8b277;
+      --accent-deep: #f3d199;
+      --glow: rgba(255, 196, 120, 0.6);
+      color: var(--ink);
+      overflow-x: clip;
+      background-color: #1d150d;
+      background-image: linear-gradient(
+        90deg,
+        #160f09 0%,
+        #241a11 22%,
+        #38291a 50%,
+        #241a11 78%,
+        #160f09 100%
+      );
+      background-attachment: fixed;
+    }
+  </style>`}
   <noscript>
     {@html `<style>.reveal{display:none!important}</style>`}
   </noscript>
@@ -530,7 +588,12 @@
        as the wall the lit bench stands against. Retired below 1080px, where
        the margins are too narrow to hold it clear of the column. -->
   <div class="pegwall pegwall-l" aria-hidden="true"></div>
-  <div class="pegwall pegwall-r" aria-hidden="true"></div>
+  <div class="pegwall pegwall-r" aria-hidden="true">
+    <!-- A paper sash screwed diagonally across the board — the workshop's
+         honest little disclaimer. Lives inside the pegwall so it dims with
+         the board and retires with it on narrow layouts. -->
+    <span class="wip-banner">work in progress</span>
+  </div>
 
   <!-- The bench wire: brass pipe plugged into the terminal, snaking down the
        column and crossing it at each section boundary (the crossings are the
@@ -630,6 +693,9 @@
       {#each intro.paragraphs as p}
         <p>{p}</p>
       {/each}
+      <p class="intro-cta">
+        <a href="#reviews">What people say about me →</a>
+      </p>
     </section>
 
     <section id="work" class="block">
@@ -642,6 +708,18 @@
         aria-label="SalesAPE mascot"
         onpointerenter={() => discover('ape')}
       ></button>
+      <!-- The superst.ac shop sign, bolted to the left pegboard beneath the
+           ape — a lit plaque that links to the real thing. -->
+      <a
+        class="pegsign"
+        href="https://superst.ac"
+        target="_blank"
+        rel="noopener"
+        aria-label="superst.ac — visit SuperStack"
+        onpointerenter={() => discover('sign')}
+      >
+        <img src={img('superstack-sign')} alt="" />
+      </a>
       {@render entryList(now)}
     </section>
 
@@ -650,8 +728,34 @@
       {@render entryList(previously)}
     </section>
 
+    <section id="reviews" class="block">
+      <h2 class="label" use:binary={'kindwords'}>Kind words</h2>
+      <p class="reviews-lead">
+        Notes from people I&rsquo;ve built with - collected on
+        <a href="https://superst.ac/matt" target="_blank" rel="noopener">SuperStack</a>.
+      </p>
+      <!-- The hosted SuperStack review marquee (script loads on mount).
+           data-transparent lets the room show through; the cards are re-dressed
+           as warm paper notes in the styles below. -->
+      <div
+        class="superstack-review-widget"
+        data-url-slug="matt"
+        data-marquee="true"
+        data-transparent="true"
+      ></div>
+    </section>
+
     <section id="projects" class="block">
       <h2 class="label" use:binary={'tinkering'}>Tinkering</h2>
+      <!-- Walle hovers beside his entry on the right pegboard, kept aloft by
+           his thrusters. -->
+      <button
+        class="pegwalle"
+        aria-label="Walle the robot"
+        onpointerenter={() => discover('walle')}
+      >
+        <img src={img('walle')} alt="" />
+      </button>
       {@render entryList(projects)}
     </section>
 
@@ -671,7 +775,12 @@
     <section id="contact" class="block contact">
       <h2 class="label" use:binary={'contact'}>Get in touch</h2>
       <p>
-        The kettle&rsquo;s usually on. Best by email — I read everything, and reply to most.
+        Let&rsquo;s chat -
+        <a
+          href="https://calendar.app.google/Xewqh1TpboQeuhWg6"
+          target="_blank"
+          rel="noopener">book a call →</a
+        >
       </p>
       <p class="links">
         <a href="mailto:{links.email}">{links.email}</a>
@@ -684,7 +793,7 @@
 
   <footer>
     <div class="colophon">
-      <span>Made by hand · London · {new Date().getFullYear()}</span>
+      <span>Matt Roche · Tinkerer for life · {new Date().getFullYear()}</span>
       <div class="colophon-right">
         <button
           class="sound"
@@ -694,7 +803,6 @@
         >
           {soundOn ? '◉ sound on' : '○ sound off'}
         </button>
-        <a href="{base}/workshop">Enter the workshop →</a>
       </div>
     </div>
   </footer>
@@ -702,7 +810,8 @@
 
 <style>
   /* ── Reveal veil ─────────────────────────────────────────────────────────
-     The room starts in near-darkness with a faint ember where the lamp sits;
+     The room starts in near-darkness with a faint ember resting on the name
+     and title, so the first thing the dark gives up is who lives here;
      clicking the lamp lifts the veil to show the dark, warm-lit workshop. */
   .reveal {
     position: fixed;
@@ -710,8 +819,8 @@
     z-index: 50;
     pointer-events: none;
     background: radial-gradient(
-      60% 55% at 78% 24%,
-      rgba(94, 62, 30, 0.4) 0%,
+      55% 45% at 36% 24%,
+      rgba(94, 62, 30, 0.42) 0%,
       rgba(18, 12, 7, 0.97) 55%,
       rgba(9, 6, 3, 0.99) 100%
     );
@@ -1017,8 +1126,16 @@
   /* ── Intro ───────────────────────────────────────────────────────────── */
   main {
     position: relative;
-    z-index: 1; /* the reading column sits above the bench wire */
+    /* No z-index here on purpose: main must not flatten into one layer, so
+       the reviews section can sink beneath the pegboards while the text
+       (later in the DOM) still paints above the wire. But that leaves main's
+       transparent body hit-testing above the sunken section — punch pointer
+       events through it, and let its children restore their own. */
+    pointer-events: none;
     padding-top: clamp(3rem, 12vh, 7rem);
+  }
+  main > * {
+    pointer-events: auto;
   }
   .intro {
     position: relative;
@@ -1058,6 +1175,15 @@
     margin: 0 0 1.1rem;
     max-width: 36rem;
   }
+  .intro-cta a {
+    color: var(--accent);
+    border-bottom: 1px solid transparent;
+    transition: border-color 180ms ease, color 180ms ease;
+  }
+  .intro-cta a:hover {
+    color: var(--accent-deep);
+    border-color: var(--accent);
+  }
 
   /* ── Blocks ──────────────────────────────────────────────────────────── */
   .block {
@@ -1075,7 +1201,7 @@
     position: absolute;
     top: 0;
     left: 0;
-    z-index: 0; /* behind the text (main sits at z-index 1), above the bg */
+    z-index: 0; /* above the boards & sunken reviews; text (later DOM) paints over it */
     overflow: visible;
     pointer-events: none;
     opacity: 0.72; /* a quiet fixture in the room, not a dominant feature */
@@ -1231,7 +1357,9 @@
     border-image-source: url('/pegboard/board_v.png');
     border-image-slice: 52 16 58 16 fill;
     border-image-repeat: stretch round;
-    opacity: 0.88;
+    /* Near-solid: the review cards pass behind the boards, and too much
+       translucency reads as a rendering glitch rather than depth. */
+    opacity: 0.97;
     filter: brightness(0.8) saturate(0.9);
   }
   /* Centred within each margin. The column is centred at 42rem, so the margin
@@ -1243,6 +1371,59 @@
   }
   .pegwall-r {
     right: calc((21rem - 50vw - clamp(148px, 15vw, 216px)) / 2);
+  }
+
+  /* ── WIP banner ──────────────────────────────────────────────────────────
+     A strip of aged paper screwed diagonally across the right pegboard, set
+     in the same mono uppercase as the rest of the room's signage. A screw
+     head at each end echoes the board's fixings; the whole thing sways a
+     hair, as if one screw has worked loose. Dimmed by the pegwall's filter. */
+  .wip-banner {
+    position: absolute;
+    top: 120px;
+    left: 50%;
+    padding: 0.55rem 1.5rem;
+    transform: translateX(-50%) rotate(45deg);
+    white-space: nowrap;
+    font-family: var(--mono);
+    font-size: 0.64rem;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #57411f;
+    /* Screw heads at each end, over warm aged paper. */
+    background:
+      radial-gradient(circle 3.5px at 0.65rem 50%, #3a2c14 0 45%, #8a744a 55%, transparent 70%),
+      radial-gradient(circle 3.5px at calc(100% - 0.65rem) 50%, #3a2c14 0 45%, #8a744a 55%, transparent 70%),
+      linear-gradient(178deg, #e6d2a2 0%, #d8bf88 100%);
+    border: 1px solid rgba(74, 56, 28, 0.55);
+    box-shadow:
+      0 7px 14px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 248, 228, 0.5);
+    animation: wip-sway 6.5s ease-in-out infinite;
+  }
+  /* A stitched inner edge, like a tag run through a sewing machine. */
+  .wip-banner::before {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border: 1px dashed rgba(74, 56, 28, 0.4);
+    pointer-events: none;
+  }
+  @keyframes wip-sway {
+    0%,
+    100% {
+      transform: translateX(-50%) rotate(44.5deg);
+    }
+    50% {
+      transform: translateX(-50%) rotate(45.5deg);
+    }
+  }
+  /* The banner catches the surge along with the rest of the board. */
+  .page.surging .wip-banner {
+    animation:
+      wip-sway 6.5s ease-in-out infinite,
+      wire-flare 0.9s ease-out;
   }
 
   /* SalesAPE mascot: a 7-frame sprite strip (362×436 cells) played with
@@ -1291,6 +1472,67 @@
       background-position-x: -980px;
     }
   }
+  /* superst.ac sign: a lit plaque on the left pegboard beneath the ape,
+     centred on the board like the ape is. The crop's grey backing melts into
+     the board through a feathered mask; hovering warms the neon. */
+  .pegsign {
+    position: absolute;
+    top: 15rem;
+    left: calc((21rem - 50vw) / 2 - 1.5rem);
+    transform: translateX(-50%);
+    width: clamp(140px, 13.5vw, 186px);
+    z-index: 1;
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.55));
+    transition: filter 240ms ease;
+  }
+  .pegsign img {
+    display: block;
+    width: 100%;
+    -webkit-mask-image: radial-gradient(115% 115% at 50% 46%, #000 62%, transparent 92%);
+    mask-image: radial-gradient(115% 115% at 50% 46%, #000 62%, transparent 92%);
+  }
+  .pegsign:hover,
+  .pegsign:focus-visible {
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.55))
+      drop-shadow(0 0 16px rgba(190, 235, 120, 0.55)) brightness(1.12);
+  }
+
+  /* Walle: hovers on the right pegboard beside his Tinkering entry, bobbing
+     gently on his thrusters. Same treatment as the other board props — the
+     art's grey backing melts into the board through a feathered mask. */
+  .pegwalle {
+    position: absolute;
+    top: 1.5rem;
+    right: calc((21rem - 50vw) / 2 - 1.5rem);
+    transform: translateX(50%);
+    width: clamp(120px, 11vw, 158px);
+    z-index: 1;
+    cursor: pointer;
+    filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.5));
+    animation: walle-hover 4.8s ease-in-out infinite;
+    transition: filter 240ms ease;
+  }
+  .pegwalle img {
+    display: block;
+    width: 100%;
+    -webkit-mask-image: radial-gradient(120% 120% at 50% 48%, #000 58%, transparent 90%);
+    mask-image: radial-gradient(120% 120% at 50% 48%, #000 58%, transparent 90%);
+  }
+  .pegwalle:hover,
+  .pegwalle:focus-visible {
+    filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.5))
+      drop-shadow(0 0 14px rgba(170, 220, 255, 0.45)) brightness(1.1);
+  }
+  @keyframes walle-hover {
+    0%,
+    100% {
+      transform: translateX(50%) translateY(0);
+    }
+    50% {
+      transform: translateX(50%) translateY(-7px);
+    }
+  }
+
   /* Section titles read as a shell prompt — the software identity in the type. */
   .label {
     font-family: var(--mono);
@@ -1354,6 +1596,105 @@
     border-color: var(--accent);
   }
 
+  /* ── SuperStack review marquee ───────────────────────────────────────────
+     The hosted widget from superst.ac, dressed for the room: the strip runs
+     full-bleed so the cards drift across the bench and boards, the cards
+     become warm paper notes, and the stars turn brass. The widget's own CSS
+     arrives at runtime, hence the !importants. */
+  .reviews-lead {
+    max-width: 38rem;
+    margin: 0 0 0.5rem;
+  }
+  /* The whole reviews section sits one layer beneath the room's fixtures —
+     where the strip reaches a pegboard, the cards slide behind the wall and
+     re-emerge, rather than floating over it. */
+  #reviews {
+    position: relative;
+    z-index: -1;
+  }
+  /* A modest breakout, not a takeover: wide enough that the cards drift past
+     the column edges, narrow enough that the pegboards keep their place. */
+  :global(.superstack-review-widget) {
+    position: relative;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(62rem, calc(100vw - 2rem));
+    min-height: 240px;
+  }
+  /* Compact the cards from SaaS-panel to workshop-note size. */
+  :global(.superstack-review-widget .carousel-container) {
+    padding-top: 1.5rem !important;
+    padding-bottom: 0.25rem !important;
+  }
+  :global(.superstack-review-widget a.block) {
+    margin: 0.7rem !important;
+  }
+  :global(.superstack-review-widget .p-6) {
+    min-height: 150px !important;
+    padding: 1rem 1.15rem !important;
+  }
+  :global(.superstack-review-widget h3) {
+    font-size: 1.05rem !important;
+    margin-bottom: 0.3rem !important;
+  }
+  :global(.superstack-review-widget p) {
+    font-size: 0.85rem !important;
+    line-height: 1.5 !important;
+  }
+  :global(.superstack-review-widget svg) {
+    width: 1.05rem !important;
+    height: 1.05rem !important;
+    margin-right: 2px !important;
+  }
+  /* The badge shrinks to colophon scale. */
+  :global(.superstack-review-widget img) {
+    height: 44px;
+  }
+  :global(.superstack-review-widget .my-6) {
+    margin: 0.75rem 0 0.5rem !important;
+  }
+  /* The widget ships its own sans; the notes should be written in the room's
+     hand. Dates stay small and quiet. */
+  :global(.superstack-review-widget h3),
+  :global(.superstack-review-widget p),
+  :global(.superstack-review-widget .font-medium) {
+    font-family: var(--serif) !important;
+  }
+  /* The "collect with SuperStack" pill: multiply melts the logo's white
+     ground into the paper card, so it reads as a stamp rather than a sticker. */
+  :global(.superstack-review-widget img) {
+    mix-blend-mode: multiply;
+  }
+  :global(.superstack-review-widget .bg-white) {
+    /* Aged paper: a darker warm sheet with pulp grain (the same fibre noise
+       as the page texture, soft-lit into the gradient), and a slightly
+       wobbly border-radius so each note reads as cut by hand, not by CSS. */
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E"),
+      linear-gradient(168deg, #dbcba4 0%, #ccb98d 100%) !important;
+    background-size: 160px 160px, auto !important;
+    background-blend-mode: soft-light, normal !important;
+    background-color: #d5c399 !important;
+    border: 1px solid rgba(58, 45, 24, 0.45) !important;
+    border-radius: 14px 6px 16px 7px / 7px 16px 6px 14px !important;
+    box-shadow: 0 7px 14px rgba(0, 0, 0, 0.35) !important;
+    filter: none !important;
+  }
+  :global(.superstack-review-widget .text-gray-600) {
+    color: #4a4231 !important;
+  }
+  :global(.superstack-review-widget .text-gray-900) {
+    color: #221d15 !important;
+  }
+  :global(.superstack-review-widget .text-gray-500) {
+    color: #695e46 !important;
+  }
+  /* Stars: the profile's teal reads cold in here — brass suits the lamplight. */
+  :global(.superstack-review-widget svg path) {
+    fill: #b98a3e !important;
+    stroke: #b98a3e !important;
+  }
+
   .contact p {
     max-width: 38rem;
   }
@@ -1399,6 +1740,7 @@
     color: var(--ink);
   }
   .sound {
+    white-space: nowrap;
     font-family: var(--mono);
     font-size: 0.72rem;
     letter-spacing: 0.06em;
@@ -1500,11 +1842,36 @@
   }
 
   /* ── Responsive ──────────────────────────────────────────────────────── */
-  /* Below ~1080px the margins are too narrow to hold the pegboard clear of
-     the reading column, so the walls retire. */
-  @media (max-width: 1080px) {
-    .pegwall {
+  /* The CRT needs a wide left margin to sit fully on-screen; below ~1240px
+     the viewport edge cuts it mid-cabinet, so it retires whole rather than
+     appear broken. (Its discovery leaves the hunt with it, in script.) The
+     bench wire is plugged into it, so it goes too — and the wire crossings
+     were the section dividers, so a quiet rule takes that job back. */
+  @media (max-width: 1239px) {
+    .crt,
+    .wire {
       display: none;
+    }
+    .block {
+      border-top: 1px solid var(--rule);
+    }
+  }
+  /* Below ~1080px the margins are too narrow to hold the pegboard clear of
+     the reading column, so the walls retire — and the ape, which hangs on
+     the left board, goes with them. */
+  @media (max-width: 1080px) {
+    .pegwall,
+    .pegape,
+    .pegsign,
+    .pegwalle {
+      display: none;
+    }
+  }
+  /* The fixed surge/find pills sit over the column once the margins thin out;
+     give the colophon room to breathe beneath them. */
+  @media (max-width: 1100px) {
+    .colophon {
+      padding-bottom: 5rem;
     }
   }
   @media (max-width: 720px) {
@@ -1515,10 +1882,12 @@
       right: clamp(-1rem, 2vw, 0.5rem);
       width: clamp(118px, 30vw, 160px);
     }
-    /* The CRT lives in the margin; on narrow screens there's no room, so retire
-       it rather than let it crowd the masthead. */
-    .crt {
-      display: none;
+    /* Stack the colophon so nothing fights the corner pills or wraps mid-word. */
+    .colophon {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.9rem;
+      padding-bottom: 5.5rem;
     }
   }
 
@@ -1544,7 +1913,10 @@
     .pendant.surging .pool,
     .pegape,
     .pegape:hover,
-    .page.surging .pegape {
+    .page.surging .pegape,
+    .wip-banner,
+    .page.surging .wip-banner,
+    .pegwalle {
       animation: none;
     }
   }

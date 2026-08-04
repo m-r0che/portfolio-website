@@ -19,32 +19,32 @@ export const stations: Station[] = [
   {
     id: 'superstack',
     label: 'SuperStack',
-    subtitle: 'AI-native operations platform',
-    blurb: 'Composable agent stack for ops teams. Founding product lead.'
+    subtitle: 'Link-in-bio, powered by testimonials',
+    blurb: 'Built the whole product; grew it to 100+ customers. Founder.'
   },
   {
     id: 'salesape',
     label: 'SalesAPE',
-    subtitle: 'AI SDRs at scale',
-    blurb: 'Product across the inbound automation workflow.'
+    subtitle: 'AI sales agents in production',
+    blurb: 'Founding product engineer — pre-revenue to approaching $10M ARR.'
   },
   {
     id: 'movetech',
     label: 'Move Tech',
-    subtitle: 'Conveyancing infrastructure',
-    blurb: 'Built data plumbing for the UK property purchase flow.'
+    subtitle: 'UK fitness marketplace',
+    blurb: 'Engineer to product lead. A third of the UK leisure centre market.'
   },
   {
     id: 'hpc',
     label: 'Hyper Product Club',
-    subtitle: 'Fractional product trio',
-    blurb: 'Consulting with Tom and Nick on AI-shaped product bets.'
+    subtitle: 'Product & engineering consulting',
+    blurb: 'Customer discovery and growth for early-stage companies.'
   },
   {
     id: 'writing',
     label: 'Writing',
     subtitle: 'Essays & notes',
-    blurb: 'Mostly about agent UX, product taste, and the new building stack.'
+    blurb: 'Occasional notes on building software like a craft.'
   },
   {
     id: 'recommendations',
@@ -56,7 +56,7 @@ export const stations: Station[] = [
     id: 'cv',
     label: 'CV',
     subtitle: 'The long form',
-    blurb: 'Fifteen-ish years across product, engineering, and ops.'
+    blurb: 'Ten years across product, engineering, and data.'
   },
   {
     id: 'contact',
