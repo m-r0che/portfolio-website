@@ -1,6 +1,7 @@
 // Cloudflare Workers config: serves the prerendered SvelteKit build as a
-// static-assets Worker on rochehq.com. Deployed by CI on pushes to main
-// (.github/workflows/deploy.yml) or manually with `npx wrangler deploy`.
+// static-assets Worker on rochehq.com. Deployed by Cloudflare Workers Builds
+// on pushes to main (connected in the dashboard), or manually with
+// `npx wrangler deploy`.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "rochehq",
