@@ -8,7 +8,6 @@
   let lit = $state(false);
   let audioOn = $state<HTMLAudioElement | undefined>(undefined);
   let audioOff = $state<HTMLAudioElement | undefined>(undefined);
-  let pullPlayed = false;
 
   // ── Discovery: count the interactive things found, to reward exploring. ───
   const seen = new Set<string>();
@@ -262,14 +261,15 @@
     const el = on ? audioOn : audioOff;
     if (!el) return;
     el.currentTime = 0;
-    const p = el.play();
-    if (p) p.then(() => (pullPlayed = true)).catch(() => {});
+    el.play()?.catch(() => {});
   }
 
+  // The opening reveal is deliberately silent — uninvited audio is rude, and
+  // on mobile even a short clip ducks whatever music is playing. Sound only
+  // ever follows a deliberate act: the lamp switch, the surge, the toggle.
   function turnOn() {
     if (lit) return;
     lit = true;
-    playClick(true);
     surge(false); // the initial power surge as the room comes alive (silent)
   }
 
@@ -290,23 +290,12 @@
 
     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     reduceMotion = prefersReduced;
-    const gestures = ['pointerdown', 'keydown', 'touchstart'] as const;
-    const disarm = () => gestures.forEach((g) => window.removeEventListener(g, onGesture));
-
-    // Autoplay is blocked until the user interacts; if the on-sound can't play with
-    // the reveal, play it on the first interaction — unless that's the lamp itself.
-    const onGesture = (e: Event) => {
-      disarm();
-      const onLamp = (e.target as HTMLElement | null)?.closest('.lamp-switch');
-      if (!pullPlayed && !onLamp) playClick(true);
-    };
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (prefersReduced) {
       lit = true;
     } else {
       timer = setTimeout(turnOn, 650);
-      gestures.forEach((g) => window.addEventListener(g, onGesture));
     }
 
     runCrt(); // the terminal in the corner starts its looping session
@@ -341,7 +330,6 @@
       if (timer) clearTimeout(timer);
       clearTimeout(surgeTimer);
       crtRunning = false;
-      disarm();
       wireRO?.disconnect();
       window.removeEventListener('resize', onResize);
       window.removeEventListener('load', onResize);
