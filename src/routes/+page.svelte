@@ -260,6 +260,10 @@
   function playClick(on: boolean) {
     const el = on ? audioOn : audioOff;
     if (!el) return;
+    // The source attaches on first use: media that's merely wired up at load
+    // makes some browsers open an audio session, yanking Bluetooth headphones
+    // over to this device even though nothing is playing.
+    if (!el.src) el.src = `${base}/audio/lamp-${on ? 'on' : 'off'}.mp3`;
     el.currentTime = 0;
     el.play()?.catch(() => {});
   }
@@ -523,8 +527,9 @@
   </noscript>
 </svelte:head>
 
-<audio bind:this={audioOn} preload="auto" src="{base}/audio/lamp-on.mp3"></audio>
-<audio bind:this={audioOff} preload="auto" src="{base}/audio/lamp-off.mp3"></audio>
+<!-- No src and no preload until first use — see playClick. -->
+<audio bind:this={audioOn} preload="none"></audio>
+<audio bind:this={audioOff} preload="none"></audio>
 <!-- Low room tone (rain + distant hum). Source is set from JS on first play;
      add static/audio/room-tone.mp3 to fill it. -->
 <audio bind:this={roomTone} preload="none" loop></audio>
